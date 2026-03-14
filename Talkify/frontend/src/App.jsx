@@ -4,6 +4,7 @@ import { fetchChannels, createChannel, joinChannel, getOrCreateDmChannel } from 
 import { fetchChannelMessages, fetchThread, searchMessages } from './api/messages.js'
 import { fetchUsers } from './api/users.js'
 import { fetchNotifications, markNotificationRead, markAllNotificationsRead } from './api/notifications.js'
+import { uploadAttachment } from './api/uploads.js'
 import { createSocket } from './ws/socket.js'
 
 function AuthForm({ onAuthenticated }) {
@@ -101,6 +102,7 @@ function ChatApp({ token, user, onLogout }) {
   const [users, setUsers] = useState([])
   const [notifications, setNotifications] = useState([])
   const [showNotifications, setShowNotifications] = useState(false)
+  const [selectedFile, setSelectedFile] = useState(null)
 
   const activeChannel = useMemo(
     () => channels.find(c => c._id === activeChannelId) || null,
@@ -255,21 +257,39 @@ function ChatApp({ token, user, onLogout }) {
     }
   }, [token, activeChannelId])
 
-  function handleSend() {
-    if (!inputValue.trim() || !ws || ws.readyState !== WebSocket.OPEN || !activeChannelId) {
+  async function handleSend() {
+    if (!inputValue.trim() && !selectedFile) {
       return
+    }
+
+    if (!ws || ws.readyState !== WebSocket.OPEN || !activeChannelId) {
+      return
+    }
+
+    let attachments = []
+
+    if (selectedFile) {
+      try {
+        const uploaded = await uploadAttachment(selectedFile, token)
+        attachments = [uploaded]
+      } catch (err) {
+        console.error(err)
+        return
+      }
     }
 
     const payload = {
       type: 'send_message',
       payload: {
         channelId: activeChannelId,
-        content: inputValue
+        content: inputValue,
+        attachments
       }
     }
 
     ws.send(JSON.stringify(payload))
     setInputValue('')
+    setSelectedFile(null)
     sendTyping(false)
   }
 
@@ -389,7 +409,7 @@ function ChatApp({ token, user, onLogout }) {
     ws.send(JSON.stringify(payload))
   }
 
-  function handleSendThread() {
+  async function handleSendThread() {
     if (
       !threadInputValue.trim() ||
       !ws ||
@@ -607,6 +627,37 @@ function ChatApp({ token, user, onLogout }) {
                     </span>
                   </div>
                   <div>{m.content}</div>
+                  {m.attachments &&
+                    m.attachments.map((a, index) => {
+                      if (a.type === 'image') {
+                        return (
+                          <img
+                            key={index}
+                            src={a.url}
+                            alt={a.name || 'image'}
+                            style={styles.attachmentImage}
+                          />
+                        )
+                      }
+                      if (a.type === 'video') {
+                        return (
+                          <video key={index} controls style={styles.attachmentVideo}>
+                            <source src={a.url} />
+                          </video>
+                        )
+                      }
+                      return (
+                        <a
+                          key={index}
+                          href={a.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={styles.attachmentLink}
+                        >
+                          {a.name || 'File'}
+                        </a>
+                      )
+                    })}
                   <div style={styles.messageActions}>
                     <div style={styles.reactionBar}>
                       {emojis.map(emoji => {
@@ -652,6 +703,11 @@ function ChatApp({ token, user, onLogout }) {
             )}
             <div style={styles.inputRow}>
               <input
+                type="file"
+                style={styles.fileInput}
+                onChange={e => setSelectedFile(e.target.files[0] || null)}
+              />
+              <input
                 style={styles.messageInput}
                 placeholder="Message"
                 value={inputValue}
@@ -691,6 +747,37 @@ function ChatApp({ token, user, onLogout }) {
                     </span>
                   </div>
                   <div>{m.content}</div>
+                  {m.attachments &&
+                    m.attachments.map((a, index) => {
+                      if (a.type === 'image') {
+                        return (
+                          <img
+                            key={index}
+                            src={a.url}
+                            alt={a.name || 'image'}
+                            style={styles.attachmentImage}
+                          />
+                        )
+                      }
+                      if (a.type === 'video') {
+                        return (
+                          <video key={index} controls style={styles.attachmentVideo}>
+                            <source src={a.url} />
+                          </video>
+                        )
+                      }
+                      return (
+                        <a
+                          key={index}
+                          href={a.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={styles.attachmentLink}
+                        >
+                          {a.name || 'File'}
+                        </a>
+                      )
+                    })}
                   {m.reactions && m.reactions.length > 0 && (
                     <div style={styles.reactions}>
                       {m.reactions.map((r, index) => (
@@ -985,6 +1072,23 @@ const styles = {
     fontSize: 12,
     color: '#9ca3af'
   },
+  attachmentImage: {
+    maxWidth: 200,
+    maxHeight: 200,
+    borderRadius: 4,
+    marginTop: 4
+  },
+  attachmentVideo: {
+    maxWidth: 240,
+    marginTop: 4
+  },
+  attachmentLink: {
+    display: 'inline-block',
+    marginTop: 4,
+    fontSize: 12,
+    color: '#38bdf8',
+    textDecoration: 'underline'
+  },
   presence: {
     fontSize: 12,
     color: '#9ca3af'
@@ -1077,6 +1181,11 @@ const styles = {
     borderRadius: 4,
     border: '1px solid #4b5563',
     backgroundColor: '#020617',
+    color: '#e5e7eb'
+  },
+  fileInput: {
+    maxWidth: 160,
+    fontSize: 10,
     color: '#e5e7eb'
   },
   typingIndicator: {

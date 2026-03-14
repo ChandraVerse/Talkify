@@ -3,7 +3,7 @@ const API_BASE = '/api'
 async function request(path, options = {}, token) {
   const headers = options.headers ? { ...options.headers } : {}
 
-  if (!headers['Content-Type'] && options.body) {
+  if (!headers['Content-Type'] && options.body && !(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json'
   }
 
@@ -28,4 +28,3 @@ async function request(path, options = {}, token) {
 }
 
 export { request }
-

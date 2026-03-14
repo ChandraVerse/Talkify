@@ -127,7 +127,7 @@ async function start() {
         }
 
         if (message.type === 'send_message') {
-          const { channelId, content, threadRootId } = message.payload
+          const { channelId, content, threadRootId, attachments } = message.payload
 
           const channel = await Channel.findById(channelId)
           if (!channel) {
@@ -148,7 +148,8 @@ async function start() {
             channelId,
             senderId: userId,
             content: content || '',
-            threadRootId: threadRootId || null
+            threadRootId: threadRootId || null,
+            attachments: attachments || []
           })
 
           const payload = JSON.stringify({
