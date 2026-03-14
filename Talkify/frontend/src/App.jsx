@@ -3,6 +3,7 @@ import { registerUser, loginUser } from './api/auth.js'
 import { fetchChannels, createChannel, joinChannel, getOrCreateDmChannel } from './api/channels.js'
 import { fetchChannelMessages, fetchThread, searchMessages } from './api/messages.js'
 import { fetchUsers } from './api/users.js'
+import { fetchNotifications, markNotificationRead, markAllNotificationsRead } from './api/notifications.js'
 import { createSocket } from './ws/socket.js'
 
 function AuthForm({ onAuthenticated }) {
@@ -98,6 +99,8 @@ function ChatApp({ token, user, onLogout }) {
   const [searchResults, setSearchResults] = useState([])
   const [searching, setSearching] = useState(false)
   const [users, setUsers] = useState([])
+  const [notifications, setNotifications] = useState([])
+  const [showNotifications, setShowNotifications] = useState(false)
 
   const activeChannel = useMemo(
     () => channels.find(c => c._id === activeChannelId) || null,
@@ -109,13 +112,15 @@ function ChatApp({ token, user, onLogout }) {
 
     async function loadInitial() {
       try {
-        const [channelsData, usersData] = await Promise.all([
+        const [channelsData, usersData, notificationsData] = await Promise.all([
           fetchChannels(token),
-          fetchUsers(token)
+          fetchUsers(token),
+          fetchNotifications(token)
         ])
         if (!isMounted) return
         setChannels(channelsData)
         setUsers(usersData)
+        setNotifications(notificationsData)
         if (channelsData.length && !activeChannelId) {
           setActiveChannelId(channelsData[0]._id)
         }
@@ -231,6 +236,15 @@ function ChatApp({ token, user, onLogout }) {
             )
           }
         }
+
+        if (data.type === 'notification_new') {
+          const notification = data.payload
+          setNotifications(prev => {
+            const exists = prev.some(n => n._id === notification._id)
+            if (exists) return prev
+            return [notification, ...prev]
+          })
+        }
       }
     })
 
@@ -288,6 +302,7 @@ function ChatApp({ token, user, onLogout }) {
   }
 
   const typingUserIds = Object.keys(typing).filter(id => id !== user.id)
+  const unreadNotifications = notifications.filter(n => !n.isRead).length
 
   async function openDm(targetUser) {
     try {
@@ -301,6 +316,37 @@ function ChatApp({ token, user, onLogout }) {
     } catch (err) {
       console.error(err)
     }
+  }
+
+  async function openNotifications() {
+    try {
+      setShowNotifications(prev => !prev)
+      if (!showNotifications && unreadNotifications > 0) {
+        await markAllNotificationsRead(token)
+        setNotifications(prev => prev.map(n => ({ ...n, isRead: true })))
+      }
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  async function goToNotification(notification) {
+    try {
+      if (!notification.isRead) {
+        const updated = await markNotificationRead(notification._id, token)
+        setNotifications(prev =>
+          prev.map(n => (n._id === updated._id ? { ...n, isRead: updated.isRead } : n))
+        )
+      }
+    } catch (err) {
+      console.error(err)
+    }
+
+    if (notification.channelId) {
+      setActiveChannelId(notification.channelId)
+    }
+
+    setShowNotifications(false)
   }
 
   async function openThread(message) {
@@ -465,10 +511,55 @@ function ChatApp({ token, user, onLogout }) {
               Search
             </button>
           </form>
+          <button
+            style={styles.secondaryButton}
+            type="button"
+            onClick={openNotifications}
+          >
+            Notifications{unreadNotifications > 0 ? ` (${unreadNotifications})` : ''}
+          </button>
           <div style={styles.presence}>
             Online: {Object.values(onlineUsers).filter(s => s === 'online').length}
           </div>
         </div>
+        {showNotifications && (
+          <div style={styles.notificationsPanel}>
+            <div style={styles.notificationsHeader}>
+              <span>Notifications</span>
+              <button
+                style={styles.secondaryButton}
+                type="button"
+                onClick={() => setShowNotifications(false)}
+              >
+                Close
+              </button>
+            </div>
+            <div style={styles.notificationsList}>
+              {notifications.length === 0 && (
+                <div style={styles.notificationEmpty}>No notifications</div>
+              )}
+              {notifications.map(notification => (
+                <button
+                  key={notification._id}
+                  type="button"
+                  style={
+                    notification.isRead
+                      ? styles.notificationItem
+                      : styles.notificationItemUnread
+                  }
+                  onClick={() => goToNotification(notification)}
+                >
+                  <div style={styles.notificationMeta}>
+                    <span>{notification.type}</span>
+                    <span style={styles.messageTime}>
+                      {new Date(notification.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {searchResults.length > 0 && (
           <div style={styles.searchResults}>
             <div style={styles.searchResultsHeader}>
@@ -835,6 +926,64 @@ const styles = {
     border: '1px solid #4b5563',
     backgroundColor: '#020617',
     color: '#e5e7eb'
+  },
+  notificationsPanel: {
+    position: 'absolute',
+    top: 44,
+    right: 12,
+    width: 260,
+    maxHeight: 280,
+    borderRadius: 8,
+    border: '1px solid #1f2937',
+    backgroundColor: '#020617',
+    boxShadow: '0 10px 15px rgba(0,0,0,0.5)',
+    zIndex: 20,
+    display: 'flex',
+    flexDirection: 'column'
+  },
+  notificationsHeader: {
+    padding: '6px 8px',
+    borderBottom: '1px solid #1f2937',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    fontSize: 13
+  },
+  notificationsList: {
+    padding: '4px 4px 8px 4px',
+    overflow: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4
+  },
+  notificationItem: {
+    textAlign: 'left',
+    borderRadius: 4,
+    border: '1px solid #1f2937',
+    backgroundColor: '#020617',
+    color: '#e5e7eb',
+    padding: '4px 6px',
+    cursor: 'pointer',
+    fontSize: 12
+  },
+  notificationItemUnread: {
+    textAlign: 'left',
+    borderRadius: 4,
+    border: '1px solid #22c55e',
+    backgroundColor: '#064e3b',
+    color: '#bbf7d0',
+    padding: '4px 6px',
+    cursor: 'pointer',
+    fontSize: 12
+  },
+  notificationMeta: {
+    display: 'flex',
+    justifyContent: 'space-between'
+  },
+  notificationEmpty: {
+    padding: '6px 8px',
+    fontSize: 12,
+    color: '#9ca3af'
   },
   presence: {
     fontSize: 12,

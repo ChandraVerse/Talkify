@@ -10,6 +10,7 @@ const { getRedisClient } = require('./config/redis')
 const Message = require('./models/Message')
 const Channel = require('./models/Channel')
 const Notification = require('./models/Notification')
+const User = require('./models/User')
 
 const PORT = process.env.PORT || 4000
 
@@ -193,6 +194,47 @@ async function start() {
                 channelId: channel._id
               })
               sendNotificationToUser(notification)
+            }
+          }
+
+          if (content) {
+            const matches = content.match(/@([^\s@]+)/g) || []
+            if (matches.length > 0) {
+              const names = Array.from(
+                new Set(
+                  matches.map(m => m.slice(1)).filter(name => name && name.length > 0)
+                )
+              )
+
+              if (names.length > 0) {
+                const mentionedUsers = await User.find({
+                  displayName: { $in: names }
+                })
+
+                for (const mentioned of mentionedUsers) {
+                  if (mentioned._id.toString() === userId.toString()) {
+                    continue
+                  }
+
+                  const isMember =
+                    channel.type === 'public' ||
+                    channel.members.some(
+                      memberId => memberId.toString() === mentioned._id.toString()
+                    )
+
+                  if (!isMember) {
+                    continue
+                  }
+
+                  const notification = await Notification.create({
+                    userId: mentioned._id,
+                    type: 'mention',
+                    messageId: created._id,
+                    channelId: channel._id
+                  })
+                  sendNotificationToUser(notification)
+                }
+              }
             }
           }
 
