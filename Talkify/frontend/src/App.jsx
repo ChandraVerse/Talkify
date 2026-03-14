@@ -103,11 +103,24 @@ function ChatApp({ token, user, onLogout }) {
   const [notifications, setNotifications] = useState([])
   const [showNotifications, setShowNotifications] = useState(false)
   const [selectedFile, setSelectedFile] = useState(null)
+  const [editingMessageId, setEditingMessageId] = useState(null)
+  const [editingText, setEditingText] = useState('')
 
   const activeChannel = useMemo(
     () => channels.find(c => c._id === activeChannelId) || null,
     [channels, activeChannelId]
   )
+
+  const userMap = useMemo(() => {
+    const map = {}
+    users.forEach(u => {
+      map[u.id] = u.displayName || u.email
+    })
+    if (user && user.id) {
+      map[user.id] = user.displayName || user.email
+    }
+    return map
+  }, [users, user])
 
   useEffect(() => {
     let isMounted = true
@@ -236,6 +249,40 @@ function ChatApp({ token, user, onLogout }) {
                   : m
               )
             )
+          }
+        }
+
+        if (data.type === 'message_updated') {
+          const updated = data.payload
+          setMessages(prev =>
+            prev.map(m =>
+              m._id === updated._id
+                ? {
+                    ...m,
+                    content: updated.content
+                  }
+                : m
+            )
+          )
+          if (threadRootId) {
+            setThreadMessages(prev =>
+              prev.map(m =>
+                m._id === updated._id
+                  ? {
+                      ...m,
+                      content: updated.content
+                    }
+                  : m
+              )
+            )
+          }
+        }
+
+        if (data.type === 'message_deleted') {
+          const { messageId } = data.payload
+          setMessages(prev => prev.filter(m => m._id !== messageId))
+          if (threadRootId) {
+            setThreadMessages(prev => prev.filter(m => m._id !== messageId))
           }
         }
 
@@ -457,6 +504,40 @@ function ChatApp({ token, user, onLogout }) {
     setSearchResults([])
   }
 
+  function startEdit(message) {
+    setEditingMessageId(message._id)
+    setEditingText(message.content || '')
+  }
+
+  function deleteMessage(message) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return
+    }
+    const payload = {
+      type: 'delete_message',
+      payload: {
+        messageId: message._id
+      }
+    }
+    ws.send(JSON.stringify(payload))
+  }
+
+  function saveEdit() {
+    if (!editingMessageId || !ws || ws.readyState !== WebSocket.OPEN) {
+      return
+    }
+    const payload = {
+      type: 'edit_message',
+      payload: {
+        messageId: editingMessageId,
+        content: editingText
+      }
+    }
+    ws.send(JSON.stringify(payload))
+    setEditingMessageId(null)
+    setEditingText('')
+  }
+
   return (
     <div style={styles.appShell}>
       <div style={styles.sidebar}>
@@ -621,12 +702,41 @@ function ChatApp({ token, user, onLogout }) {
               return (
                 <div key={m._id} style={styles.messageRow}>
                   <div style={styles.messageMeta}>
-                    <span>{m.senderId}</span>
+                    <span>{userMap[m.senderId] || m.senderId}</span>
                     <span style={styles.messageTime}>
                       {new Date(m.createdAt).toLocaleTimeString()}
                     </span>
                   </div>
-                  <div>{m.content}</div>
+                  {editingMessageId === m._id ? (
+                    <div style={styles.editRow}>
+                      <input
+                        style={styles.editInput}
+                        value={editingText}
+                        onChange={e => setEditingText(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault()
+                            saveEdit()
+                          }
+                        }}
+                      />
+                      <button style={styles.primaryButton} type="button" onClick={saveEdit}>
+                        Save
+                      </button>
+                      <button
+                        style={styles.secondaryButton}
+                        type="button"
+                        onClick={() => {
+                          setEditingMessageId(null)
+                          setEditingText('')
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div>{m.content}</div>
+                  )}
                   {m.attachments &&
                     m.attachments.map((a, index) => {
                       if (a.type === 'image') {
@@ -676,13 +786,33 @@ function ChatApp({ token, user, onLogout }) {
                         )
                       })}
                     </div>
-                    <button
-                      type="button"
-                      style={styles.replyButton}
-                      onClick={() => openThread(m)}
-                    >
-                      Reply
-                    </button>
+                    <div style={styles.messageActionButtons}>
+                      <button
+                        type="button"
+                        style={styles.replyButton}
+                        onClick={() => openThread(m)}
+                      >
+                        Reply
+                      </button>
+                      {m.senderId === user.id && (
+                        <>
+                          <button
+                            type="button"
+                            style={styles.replyButton}
+                            onClick={() => startEdit(m)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            style={styles.replyButton}
+                            onClick={() => deleteMessage(m)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                   {userReactions.length > 0 && (
                     <div style={styles.reactions}>
@@ -741,7 +871,7 @@ function ChatApp({ token, user, onLogout }) {
               {threadMessages.map(m => (
                 <div key={m._id} style={styles.messageRow}>
                   <div style={styles.messageMeta}>
-                    <span>{m.senderId}</span>
+                    <span>{userMap[m.senderId] || m.senderId}</span>
                     <span style={styles.messageTime}>
                       {new Date(m.createdAt).toLocaleTimeString()}
                     </span>
@@ -1089,6 +1219,19 @@ const styles = {
     color: '#38bdf8',
     textDecoration: 'underline'
   },
+  editRow: {
+    display: 'flex',
+    gap: 6,
+    marginTop: 4
+  },
+  editInput: {
+    flex: 1,
+    padding: '4px 6px',
+    borderRadius: 4,
+    border: '1px solid #4b5563',
+    backgroundColor: '#020617',
+    color: '#e5e7eb'
+  },
   presence: {
     fontSize: 12,
     color: '#9ca3af'
@@ -1135,6 +1278,10 @@ const styles = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center'
+  },
+  messageActionButtons: {
+    display: 'flex',
+    gap: 4
   },
   reactionBar: {
     display: 'flex',

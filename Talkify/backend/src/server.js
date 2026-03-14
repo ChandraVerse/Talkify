@@ -242,6 +242,91 @@ async function start() {
           return
         }
 
+        if (message.type === 'edit_message') {
+          const { messageId, content } = message.payload
+
+          const target = await Message.findById(messageId)
+          if (!target) {
+            return
+          }
+
+          const channel = await Channel.findById(target.channelId)
+          if (!channel) {
+            return
+          }
+
+          const userId = socket.userId
+
+          if (target.senderId.toString() !== userId.toString()) {
+            return
+          }
+
+          target.content = content || ''
+
+          await target.save()
+
+          const payload = JSON.stringify({
+            type: 'message_updated',
+            payload: target
+          })
+
+          wss.clients.forEach(client => {
+            if (
+              client.readyState === WebSocket.OPEN &&
+              client.channels &&
+              client.channels.has(channel._id.toString())
+            ) {
+              client.send(payload)
+            }
+          })
+
+          return
+        }
+
+        if (message.type === 'delete_message') {
+          const { messageId } = message.payload
+
+          const target = await Message.findById(messageId)
+          if (!target) {
+            return
+          }
+
+          const channel = await Channel.findById(target.channelId)
+          if (!channel) {
+            return
+          }
+
+          const userId = socket.userId
+
+          if (target.senderId.toString() !== userId.toString()) {
+            return
+          }
+
+          target.deletedAt = new Date()
+
+          await target.save()
+
+          const payload = JSON.stringify({
+            type: 'message_deleted',
+            payload: {
+              messageId: target._id,
+              channelId: channel._id
+            }
+          })
+
+          wss.clients.forEach(client => {
+            if (
+              client.readyState === WebSocket.OPEN &&
+              client.channels &&
+              client.channels.has(channel._id.toString())
+            ) {
+              client.send(payload)
+            }
+          })
+
+          return
+        }
+
         if (message.type === 'typing_start') {
           const { channelId } = message.payload
           broadcastTyping(channelId, socket.userId, true)
