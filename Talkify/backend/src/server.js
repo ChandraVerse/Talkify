@@ -9,6 +9,7 @@ const { initRedis } = require('./config/redis')
 const { getRedisClient } = require('./config/redis')
 const Message = require('./models/Message')
 const Channel = require('./models/Channel')
+const Notification = require('./models/Notification')
 
 const PORT = process.env.PORT || 4000
 
@@ -68,6 +69,21 @@ async function start() {
         client.channels.has(message.channelId.toString())
       ) {
         client.send(payload)
+      }
+    })
+  }
+
+  function sendNotificationToUser(notification) {
+    const payload = JSON.stringify({
+      type: 'notification_new',
+      payload: notification
+    })
+
+    wss.clients.forEach(client => {
+      if (client.readyState === WebSocket.OPEN && client.userId) {
+        if (client.userId.toString() === notification.userId.toString()) {
+          client.send(payload)
+        }
       }
     })
   }
@@ -150,6 +166,35 @@ async function start() {
               client.send(payload)
             }
           })
+
+          if (channel.type === 'dm') {
+            const targetIds = channel.members
+              .map(memberId => memberId.toString())
+              .filter(id => id !== userId.toString())
+
+            for (const targetId of targetIds) {
+              const notification = await Notification.create({
+                userId: targetId,
+                type: 'dm',
+                messageId: created._id,
+                channelId: channel._id
+              })
+              sendNotificationToUser(notification)
+            }
+          }
+
+          if (threadRootId) {
+            const root = await Message.findById(threadRootId)
+            if (root && root.senderId.toString() !== userId.toString()) {
+              const notification = await Notification.create({
+                userId: root.senderId,
+                type: 'reply',
+                messageId: created._id,
+                channelId: channel._id
+              })
+              sendNotificationToUser(notification)
+            }
+          }
 
           return
         }
@@ -253,4 +298,3 @@ start().catch(err => {
   console.error('Failed to start server', err)
   process.exit(1)
 })
-
