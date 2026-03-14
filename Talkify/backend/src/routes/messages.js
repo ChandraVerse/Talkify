@@ -18,7 +18,8 @@ router.get('/channel/:channelId', async (req, res) => {
     }
 
     const canAccess =
-      channel.type === 'public' || channel.members.includes(req.user.id)
+      channel.type === 'public' ||
+      channel.members.some(memberId => memberId.toString() === req.user.id)
 
     if (!canAccess) {
       return res.status(403).json({ message: 'Forbidden' })
@@ -56,7 +57,8 @@ router.post('/channel/:channelId', async (req, res) => {
     }
 
     const canAccess =
-      channel.type === 'public' || channel.members.includes(req.user.id)
+      channel.type === 'public' ||
+      channel.members.some(memberId => memberId.toString() === req.user.id)
 
     if (!canAccess) {
       return res.status(403).json({ message: 'Forbidden' })
@@ -77,4 +79,3 @@ router.post('/channel/:channelId', async (req, res) => {
 })
 
 module.exports = router
-

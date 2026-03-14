@@ -53,8 +53,10 @@ router.post('/:id/join', async (req, res) => {
       return res.status(403).json({ message: 'Cannot join private channel' })
     }
 
-    if (!channel.members.includes(req.user.id)) {
-      channel.members.push(req.user.id)
+    const userId = req.user.id
+
+    if (!channel.members.some(memberId => memberId.toString() === userId)) {
+      channel.members.push(userId)
       await channel.save()
     }
 
@@ -66,4 +68,3 @@ router.post('/:id/join', async (req, res) => {
 })
 
 module.exports = router
-
