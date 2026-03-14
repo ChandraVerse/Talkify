@@ -172,4 +172,40 @@ router.post('/:id/reactions', async (req, res) => {
   }
 })
 
+router.post('/:id/read', async (req, res) => {
+  try {
+    const { id } = req.params
+
+    const message = await Message.findById(id)
+
+    if (!message) {
+      return res.status(404).json({ message: 'Message not found' })
+    }
+
+    const channel = await Channel.findById(message.channelId)
+
+    if (!channel) {
+      return res.status(404).json({ message: 'Channel not found' })
+    }
+
+    const canAccess =
+      channel.type === 'public' ||
+      channel.members.some(memberId => memberId.toString() === req.user.id)
+
+    if (!canAccess) {
+      return res.status(403).json({ message: 'Forbidden' })
+    }
+
+    if (!message.readBy.some(userId => userId.toString() === req.user.id)) {
+      message.readBy.push(req.user.id)
+      await message.save()
+    }
+
+    return res.json(message)
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ message: 'Internal server error' })
+  }
+})
+
 module.exports = router

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { registerUser, loginUser } from './api/auth.js'
 import { fetchChannels, createChannel, joinChannel, getOrCreateDmChannel } from './api/channels.js'
-import { fetchChannelMessages, fetchThread, searchMessages } from './api/messages.js'
+import { fetchChannelMessages, fetchThread, searchMessages, markMessageRead } from './api/messages.js'
 import { fetchUsers } from './api/users.js'
 import { fetchNotifications, markNotificationRead, markAllNotificationsRead } from './api/notifications.js'
 import { uploadAttachment } from './api/uploads.js'
@@ -160,6 +160,10 @@ function ChatApp({ token, user, onLogout }) {
         const data = await fetchChannelMessages(activeChannelId, token)
         if (!isMounted) return
         setMessages(data)
+        if (data.length > 0) {
+          const last = data[data.length - 1]
+          markMessageRead(last._id, token).catch(() => {})
+        }
       } catch (err) {
         console.error(err)
       }
@@ -699,6 +703,9 @@ function ChatApp({ token, user, onLogout }) {
               const emojis = ['👍', '❤️', '😀']
               const userReactions = m.reactions || []
 
+              const readers =
+                (m.readBy || []).filter(id => id !== user.id) || []
+
               return (
                 <div key={m._id} style={styles.messageRow}>
                   <div style={styles.messageMeta}>
@@ -821,6 +828,11 @@ function ChatApp({ token, user, onLogout }) {
                           {r.emoji}
                         </span>
                       ))}
+                    </div>
+                  )}
+                  {readers.length > 0 && (
+                    <div style={styles.readReceipt}>
+                      Seen by {readers.length}
                     </div>
                   )}
                 </div>
@@ -1272,6 +1284,11 @@ const styles = {
     padding: '2px 4px',
     borderRadius: 999,
     backgroundColor: '#111827'
+  },
+  readReceipt: {
+    marginTop: 2,
+    fontSize: 11,
+    color: '#9ca3af'
   },
   messageActions: {
     marginTop: 4,

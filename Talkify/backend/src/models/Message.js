@@ -66,6 +66,12 @@ const messageSchema = new Schema(
       default: null,
       index: true
     },
+    readBy: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: 'User'
+      }
+    ],
     deletedAt: {
       type: Date,
       default: null
@@ -81,4 +87,3 @@ messageSchema.index({ content: 'text' })
 const Message = model('Message', messageSchema)
 
 module.exports = Message
-

@@ -21,5 +21,8 @@ async function searchMessages(params, token) {
   return request(`/search/messages?${query.toString()}`, { method: 'GET' }, token)
 }
 
-export { fetchChannelMessages, fetchThread, searchMessages }
+async function markMessageRead(messageId, token) {
+  return request(`/messages/${messageId}/read`, { method: 'POST' }, token)
+}
 
+export { fetchChannelMessages, fetchThread, searchMessages, markMessageRead }
