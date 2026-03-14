@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { registerUser, loginUser } from './api/auth.js'
 import { fetchChannels, createChannel, joinChannel } from './api/channels.js'
-import { fetchChannelMessages } from './api/messages.js'
+import { fetchChannelMessages, fetchThread, searchMessages } from './api/messages.js'
 import { createSocket } from './ws/socket.js'
 
 function AuthForm({ onAuthenticated }) {
@@ -90,6 +90,12 @@ function ChatApp({ token, user, onLogout }) {
   const [typing, setTyping] = useState({})
   const [channelNameInput, setChannelNameInput] = useState('')
   const [channelType, setChannelType] = useState('public')
+  const [threadRootId, setThreadRootId] = useState(null)
+  const [threadMessages, setThreadMessages] = useState([])
+  const [threadInputValue, setThreadInputValue] = useState('')
+  const [searchText, setSearchText] = useState('')
+  const [searchResults, setSearchResults] = useState([])
+  const [searching, setSearching] = useState(false)
 
   const activeChannel = useMemo(
     () => channels.find(c => c._id === activeChannelId) || null,
@@ -159,6 +165,16 @@ function ChatApp({ token, user, onLogout }) {
           setMessages(prev =>
             message.channelId === activeChannelId ? [...prev, message] : prev
           )
+
+          if (threadRootId) {
+            const rootId = threadRootId
+            if (
+              message._id === rootId ||
+              (message.threadRootId && message.threadRootId === rootId)
+            ) {
+              setThreadMessages(prev => [...prev, message])
+            }
+          }
         }
 
         if (data.type === 'presence_update') {
@@ -195,6 +211,19 @@ function ChatApp({ token, user, onLogout }) {
                 : m
             )
           )
+
+          if (threadRootId) {
+            setThreadMessages(prev =>
+              prev.map(m =>
+                m._id === messageId
+                  ? {
+                      ...m,
+                      reactions
+                    }
+                  : m
+              )
+            )
+          }
         }
       }
     })
@@ -254,6 +283,94 @@ function ChatApp({ token, user, onLogout }) {
 
   const typingUserIds = Object.keys(typing).filter(id => id !== user.id)
 
+  async function openThread(message) {
+    try {
+      const rootId = message.threadRootId || message._id
+      const data = await fetchThread(rootId, token)
+      setThreadRootId(rootId)
+      setThreadMessages(data)
+      setThreadInputValue('')
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  function closeThread() {
+    setThreadRootId(null)
+    setThreadMessages([])
+    setThreadInputValue('')
+  }
+
+  function toggleReaction(message, emoji) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return
+    }
+
+    const hasReaction =
+      message.reactions &&
+      message.reactions.some(r => r.emoji === emoji && r.userId === user.id)
+
+    const type = hasReaction ? 'remove_reaction' : 'add_reaction'
+
+    const payload = {
+      type,
+      payload: {
+        messageId: message._id,
+        emoji
+      }
+    }
+
+    ws.send(JSON.stringify(payload))
+  }
+
+  function handleSendThread() {
+    if (
+      !threadInputValue.trim() ||
+      !ws ||
+      ws.readyState !== WebSocket.OPEN ||
+      !activeChannelId ||
+      !threadRootId
+    ) {
+      return
+    }
+
+    const payload = {
+      type: 'send_message',
+      payload: {
+        channelId: activeChannelId,
+        content: threadInputValue,
+        threadRootId
+      }
+    }
+
+    ws.send(JSON.stringify(payload))
+    setThreadInputValue('')
+  }
+
+  async function handleSearch(e) {
+    e.preventDefault()
+    if (!searchText.trim()) {
+      setSearchResults([])
+      return
+    }
+
+    try {
+      setSearching(true)
+      const results = await searchMessages({ q: searchText, limit: 50 }, token)
+      setSearchResults(results)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  function goToMessage(result) {
+    if (!result.channelId) return
+    setActiveChannelId(result.channelId)
+    setSearchResults([])
+  }
+
   return (
     <div style={styles.appShell}>
       <div style={styles.sidebar}>
@@ -304,58 +421,185 @@ function ChatApp({ token, user, onLogout }) {
           <div>
             {activeChannel ? `# ${activeChannel.name}` : 'Select a channel'}
           </div>
+          <form style={styles.searchForm} onSubmit={handleSearch}>
+            <input
+              style={styles.searchInput}
+              placeholder="Search messages"
+              value={searchText}
+              onChange={e => setSearchText(e.target.value)}
+            />
+            <button style={styles.secondaryButton} type="submit" disabled={searching}>
+              Search
+            </button>
+          </form>
           <div style={styles.presence}>
             Online: {Object.values(onlineUsers).filter(s => s === 'online').length}
           </div>
         </div>
-        <div style={styles.messages}>
-          {messages.map(m => (
-            <div key={m._id} style={styles.messageRow}>
-              <div style={styles.messageMeta}>
-                <span>{m.senderId}</span>
-                <span style={styles.messageTime}>
-                  {new Date(m.createdAt).toLocaleTimeString()}
-                </span>
-              </div>
-              <div>{m.content}</div>
-              {m.reactions && m.reactions.length > 0 && (
-                <div style={styles.reactions}>
-                  {m.reactions.map((r, index) => (
-                    <span key={index} style={styles.reaction}>
-                      {r.emoji}
-                    </span>
-                  ))}
-                </div>
-              )}
+        {searchResults.length > 0 && (
+          <div style={styles.searchResults}>
+            <div style={styles.searchResultsHeader}>
+              <span>Search results</span>
+              <button
+                style={styles.secondaryButton}
+                type="button"
+                onClick={() => setSearchResults([])}
+              >
+                Close
+              </button>
             </div>
-          ))}
-        </div>
-        <div style={styles.inputArea}>
-          {typingUserIds.length > 0 && (
-            <div style={styles.typingIndicator}>Someone is typing...</div>
-          )}
-          <div style={styles.inputRow}>
-            <input
-              style={styles.messageInput}
-              placeholder="Message"
-              value={inputValue}
-              onChange={e => {
-                setInputValue(e.target.value)
-                sendTyping(true)
-              }}
-              onBlur={() => sendTyping(false)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  handleSend()
-                }
-              }}
-            />
-            <button style={styles.primaryButton} onClick={handleSend}>
-              Send
-            </button>
+            <div style={styles.searchResultsList}>
+              {searchResults.map(result => (
+                <button
+                  key={result._id}
+                  style={styles.searchResultItem}
+                  type="button"
+                  onClick={() => goToMessage(result)}
+                >
+                  <div style={styles.searchResultMeta}>
+                    <span>{result.senderId}</span>
+                    <span style={styles.messageTime}>
+                      {new Date(result.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                  <div>{result.content}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div style={styles.chatBody}>
+          <div style={styles.messages}>
+            {messages.map(m => {
+              const emojis = ['👍', '❤️', '😀']
+              const userReactions = m.reactions || []
+
+              return (
+                <div key={m._id} style={styles.messageRow}>
+                  <div style={styles.messageMeta}>
+                    <span>{m.senderId}</span>
+                    <span style={styles.messageTime}>
+                      {new Date(m.createdAt).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <div>{m.content}</div>
+                  <div style={styles.messageActions}>
+                    <div style={styles.reactionBar}>
+                      {emojis.map(emoji => {
+                        const reacted = userReactions.some(
+                          r => r.emoji === emoji && r.userId === user.id
+                        )
+                        return (
+                          <button
+                            key={emoji}
+                            type="button"
+                            style={reacted ? styles.reactionButtonActive : styles.reactionButton}
+                            onClick={() => toggleReaction(m, emoji)}
+                          >
+                            {emoji}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    <button
+                      type="button"
+                      style={styles.replyButton}
+                      onClick={() => openThread(m)}
+                    >
+                      Reply
+                    </button>
+                  </div>
+                  {userReactions.length > 0 && (
+                    <div style={styles.reactions}>
+                      {userReactions.map((r, index) => (
+                        <span key={index} style={styles.reaction}>
+                          {r.emoji}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          <div style={styles.inputArea}>
+            {typingUserIds.length > 0 && (
+              <div style={styles.typingIndicator}>Someone is typing...</div>
+            )}
+            <div style={styles.inputRow}>
+              <input
+                style={styles.messageInput}
+                placeholder="Message"
+                value={inputValue}
+                onChange={e => {
+                  setInputValue(e.target.value)
+                  sendTyping(true)
+                }}
+                onBlur={() => sendTyping(false)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleSend()
+                  }
+                }}
+              />
+              <button style={styles.primaryButton} onClick={handleSend}>
+                Send
+              </button>
+            </div>
           </div>
         </div>
+        {threadRootId && (
+          <div style={styles.threadPane}>
+            <div style={styles.threadHeader}>
+              <span>Thread</span>
+              <button style={styles.secondaryButton} type="button" onClick={closeThread}>
+                Close
+              </button>
+            </div>
+            <div style={styles.threadMessages}>
+              {threadMessages.map(m => (
+                <div key={m._id} style={styles.messageRow}>
+                  <div style={styles.messageMeta}>
+                    <span>{m.senderId}</span>
+                    <span style={styles.messageTime}>
+                      {new Date(m.createdAt).toLocaleTimeString()}
+                    </span>
+                  </div>
+                  <div>{m.content}</div>
+                  {m.reactions && m.reactions.length > 0 && (
+                    <div style={styles.reactions}>
+                      {m.reactions.map((r, index) => (
+                        <span key={index} style={styles.reaction}>
+                          {r.emoji}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={styles.inputArea}>
+              <div style={styles.inputRow}>
+                <input
+                  style={styles.messageInput}
+                  placeholder="Reply in thread"
+                  value={threadInputValue}
+                  onChange={e => setThreadInputValue(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSendThread()
+                    }
+                  }}
+                />
+                <button style={styles.primaryButton} onClick={handleSendThread}>
+                  Send
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -530,12 +774,29 @@ const styles = {
     justifyContent: 'space-between',
     alignItems: 'center'
   },
+  searchForm: {
+    display: 'flex',
+    gap: 6,
+    marginLeft: 12,
+    marginRight: 12
+  },
+  searchInput: {
+    padding: '4px 8px',
+    borderRadius: 4,
+    border: '1px solid #4b5563',
+    backgroundColor: '#020617',
+    color: '#e5e7eb'
+  },
   presence: {
     fontSize: 12,
     color: '#9ca3af'
   },
-  messages: {
+  chatBody: {
     flex: 1,
+    display: 'flex'
+  },
+  messages: {
+    flex: 2,
     padding: '8px 12px',
     overflow: 'auto',
     display: 'flex',
@@ -567,6 +828,43 @@ const styles = {
     borderRadius: 999,
     backgroundColor: '#111827'
   },
+  messageActions: {
+    marginTop: 4,
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  reactionBar: {
+    display: 'flex',
+    gap: 4
+  },
+  reactionButton: {
+    padding: '2px 4px',
+    borderRadius: 999,
+    border: '1px solid #374151',
+    backgroundColor: 'transparent',
+    color: '#e5e7eb',
+    cursor: 'pointer',
+    fontSize: 12
+  },
+  reactionButtonActive: {
+    padding: '2px 4px',
+    borderRadius: 999,
+    border: '1px solid #22c55e',
+    backgroundColor: '#064e3b',
+    color: '#bbf7d0',
+    cursor: 'pointer',
+    fontSize: 12
+  },
+  replyButton: {
+    padding: '2px 6px',
+    borderRadius: 4,
+    border: '1px solid #4b5563',
+    backgroundColor: 'transparent',
+    color: '#e5e7eb',
+    cursor: 'pointer',
+    fontSize: 12
+  },
   inputArea: {
     borderTop: '1px solid #1f2937',
     padding: 8
@@ -587,8 +885,58 @@ const styles = {
     fontSize: 12,
     color: '#9ca3af',
     marginBottom: 4
+  },
+  threadPane: {
+    width: 320,
+    borderLeft: '1px solid #1f2937',
+    display: 'flex',
+    flexDirection: 'column'
+  },
+  threadHeader: {
+    padding: '8px 12px',
+    borderBottom: '1px solid #1f2937',
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center'
+  },
+  threadMessages: {
+    flex: 1,
+    padding: '8px 12px',
+    overflow: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4
+  },
+  searchResults: {
+    borderBottom: '1px solid #1f2937',
+    padding: '8px 12px'
+  },
+  searchResultsHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6
+  },
+  searchResultsList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4
+  },
+  searchResultItem: {
+    textAlign: 'left',
+    borderRadius: 4,
+    border: '1px solid #1f2937',
+    backgroundColor: '#020617',
+    color: '#e5e7eb',
+    padding: '4px 6px',
+    cursor: 'pointer'
+  },
+  searchResultMeta: {
+    fontSize: 11,
+    color: '#9ca3af',
+    display: 'flex',
+    justifyContent: 'space-between'
   }
 }
 
 export default App
-
