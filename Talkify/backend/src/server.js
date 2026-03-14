@@ -51,6 +51,27 @@ async function start() {
     })
   }
 
+  function broadcastReactionUpdate(message) {
+    const payload = JSON.stringify({
+      type: 'reaction_update',
+      payload: {
+        messageId: message._id,
+        reactions: message.reactions,
+        channelId: message.channelId
+      }
+    })
+
+    wss.clients.forEach(client => {
+      if (
+        client.readyState === WebSocket.OPEN &&
+        client.channels &&
+        client.channels.has(message.channelId.toString())
+      ) {
+        client.send(payload)
+      }
+    })
+  }
+
   wss.on('connection', (socket, req) => {
     try {
       const url = new URL(req.url, 'http://localhost')
@@ -142,6 +163,79 @@ async function start() {
         if (message.type === 'typing_stop') {
           const { channelId } = message.payload
           broadcastTyping(channelId, socket.userId, false)
+          return
+        }
+
+        if (message.type === 'add_reaction') {
+          const { messageId, emoji } = message.payload
+
+          const target = await Message.findById(messageId)
+
+          if (!target) {
+            return
+          }
+
+          const channel = await Channel.findById(target.channelId)
+
+          if (!channel) {
+            return
+          }
+
+          const userId = socket.userId
+
+          const canAccess =
+            channel.type === 'public' ||
+            channel.members.some(memberId => memberId.toString() === userId)
+
+          if (!canAccess) {
+            return
+          }
+
+          const exists = target.reactions.some(
+            r => r.emoji === emoji && r.userId.toString() === userId
+          )
+
+          if (!exists) {
+            target.reactions.push({ emoji, userId })
+            await target.save()
+          }
+
+          broadcastReactionUpdate(target)
+          return
+        }
+
+        if (message.type === 'remove_reaction') {
+          const { messageId, emoji } = message.payload
+
+          const target = await Message.findById(messageId)
+
+          if (!target) {
+            return
+          }
+
+          const channel = await Channel.findById(target.channelId)
+
+          if (!channel) {
+            return
+          }
+
+          const userId = socket.userId
+
+          const canAccess =
+            channel.type === 'public' ||
+            channel.members.some(memberId => memberId.toString() === userId)
+
+          if (!canAccess) {
+            return
+          }
+
+          target.reactions = target.reactions.filter(
+            r => !(r.emoji === emoji && r.userId.toString() === userId)
+          )
+
+          await target.save()
+
+          broadcastReactionUpdate(target)
           return
         }
       } catch (err) {
