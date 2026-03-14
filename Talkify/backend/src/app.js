@@ -5,6 +5,7 @@ const channelRoutes = require('./routes/channels')
 const messageRoutes = require('./routes/messages')
 const searchRoutes = require('./routes/search')
 const notificationRoutes = require('./routes/notifications')
+const userRoutes = require('./routes/users')
 
 const app = express()
 
@@ -22,6 +23,7 @@ app.use('/api/channels', channelRoutes)
 app.use('/api/messages', messageRoutes)
 app.use('/api/search', searchRoutes)
 app.use('/api/notifications', notificationRoutes)
+app.use('/api/users', userRoutes)
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' })

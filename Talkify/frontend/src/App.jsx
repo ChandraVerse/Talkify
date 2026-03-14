@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { registerUser, loginUser } from './api/auth.js'
-import { fetchChannels, createChannel, joinChannel } from './api/channels.js'
+import { fetchChannels, createChannel, joinChannel, getOrCreateDmChannel } from './api/channels.js'
 import { fetchChannelMessages, fetchThread, searchMessages } from './api/messages.js'
+import { fetchUsers } from './api/users.js'
 import { createSocket } from './ws/socket.js'
 
 function AuthForm({ onAuthenticated }) {
@@ -96,6 +97,7 @@ function ChatApp({ token, user, onLogout }) {
   const [searchText, setSearchText] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [searching, setSearching] = useState(false)
+  const [users, setUsers] = useState([])
 
   const activeChannel = useMemo(
     () => channels.find(c => c._id === activeChannelId) || null,
@@ -105,20 +107,24 @@ function ChatApp({ token, user, onLogout }) {
   useEffect(() => {
     let isMounted = true
 
-    async function loadChannels() {
+    async function loadInitial() {
       try {
-        const data = await fetchChannels(token)
+        const [channelsData, usersData] = await Promise.all([
+          fetchChannels(token),
+          fetchUsers(token)
+        ])
         if (!isMounted) return
-        setChannels(data)
-        if (data.length && !activeChannelId) {
-          setActiveChannelId(data[0]._id)
+        setChannels(channelsData)
+        setUsers(usersData)
+        if (channelsData.length && !activeChannelId) {
+          setActiveChannelId(channelsData[0]._id)
         }
       } catch (err) {
         console.error(err)
       }
     }
 
-    loadChannels()
+    loadInitial()
 
     return () => {
       isMounted = false
@@ -283,6 +289,20 @@ function ChatApp({ token, user, onLogout }) {
 
   const typingUserIds = Object.keys(typing).filter(id => id !== user.id)
 
+  async function openDm(targetUser) {
+    try {
+      const channel = await getOrCreateDmChannel(targetUser.id, token)
+      setChannels(prev => {
+        const exists = prev.some(c => c._id === channel._id)
+        if (exists) return prev
+        return [...prev, channel]
+      })
+      setActiveChannelId(channel._id)
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
   async function openThread(message) {
     try {
       const rootId = message.threadRootId || message._id
@@ -393,6 +413,19 @@ function ChatApp({ token, user, onLogout }) {
               onClick={() => setActiveChannelId(channel._id)}
             >
               <span># {channel.name}</span>
+            </button>
+          ))}
+        </div>
+        <div style={styles.sectionTitle}>Direct Messages</div>
+        <div style={styles.dmList}>
+          {users.map(u => (
+            <button
+              key={u.id}
+              type="button"
+              style={styles.dmButton}
+              onClick={() => openDm(u)}
+            >
+              <span>{u.displayName}</span>
             </button>
           ))}
         </div>
@@ -737,6 +770,11 @@ const styles = {
     overflow: 'auto',
     marginBottom: 8
   },
+  dmList: {
+    maxHeight: 160,
+    overflow: 'auto',
+    marginBottom: 8
+  },
   channelButton: {
     width: '100%',
     padding: '6px 8px',
@@ -761,6 +799,17 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: 6
+  },
+  dmButton: {
+    width: '100%',
+    padding: '4px 8px',
+    borderRadius: 4,
+    border: 'none',
+    backgroundColor: 'transparent',
+    color: '#e5e7eb',
+    textAlign: 'left',
+    cursor: 'pointer',
+    fontSize: 14
   },
   chatPane: {
     flex: 1,

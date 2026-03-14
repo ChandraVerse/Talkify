@@ -41,6 +41,41 @@ router.get('/', async (req, res) => {
   }
 })
 
+router.post('/dm', async (req, res) => {
+  try {
+    const { targetUserId } = req.body
+
+    if (!targetUserId) {
+      return res.status(400).json({ message: 'targetUserId is required' })
+    }
+
+    if (targetUserId === req.user.id) {
+      return res.status(400).json({ message: 'Cannot create DM with yourself' })
+    }
+
+    const existing = await Channel.findOne({
+      type: 'dm',
+      members: { $all: [req.user.id, targetUserId] }
+    })
+
+    if (existing) {
+      return res.json(existing)
+    }
+
+    const channel = await Channel.create({
+      name: '',
+      type: 'dm',
+      members: [req.user.id, targetUserId],
+      createdBy: req.user.id
+    })
+
+    return res.status(201).json(channel)
+  } catch (err) {
+    console.error(err)
+    return res.status(500).json({ message: 'Internal server error' })
+  }
+})
+
 router.post('/:id/join', async (req, res) => {
   try {
     const channel = await Channel.findById(req.params.id)

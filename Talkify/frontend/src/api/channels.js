@@ -19,5 +19,15 @@ async function joinChannel(id, token) {
   return request(`/channels/${id}/join`, { method: 'POST' }, token)
 }
 
-export { fetchChannels, createChannel, joinChannel }
+async function getOrCreateDmChannel(targetUserId, token) {
+  return request(
+    '/channels/dm',
+    {
+      method: 'POST',
+      body: JSON.stringify({ targetUserId })
+    },
+    token
+  )
+}
 
+export { fetchChannels, createChannel, joinChannel, getOrCreateDmChannel }
